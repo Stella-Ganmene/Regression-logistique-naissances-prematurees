@@ -1,0 +1,144 @@
+---
+title: "Facteurs de risque et de protection de la naissance prématurée : une analyse par régression logistique"
+author: "Stella Ganmene"
+date: "2023"
+output: html_document
+---
+
+## Contexte
+
+Ce travail applique la régression logistique à un jeu de données sur les naissances prématurées, dans le but d'identifier les facteurs de risque et les facteurs protecteurs associés à cet événement, et d'évaluer la qualité prédictive du modèle obtenu.
+
+## Packages nécessaires
+
+```{r, message=FALSE, warning=FALSE}
+# install.packages("ROCR")
+# install.packages("gtsummary")
+library(ROCR)
+library(gtsummary)
+```
+
+## Chargement et exploration des données
+
+```{r}
+load("prema.RData")
+head(prema)
+```
+
+Vérification du type des variables :
+
+```{r}
+str(prema)
+```
+
+### Exploration des variables quantitatives
+
+```{r}
+var_quant <- prema[, sapply(prema, is.numeric)]
+pairs(prema[, c(1, 2, 3, 7, 9, 10)])
+```
+
+La variable de gestité (nombre de grossesses) semble liée linéairement à la parité (nombre de grossesses à terme) : l'une augmente lorsque l'autre augmente.
+
+```{r}
+cor(prema[, c(1, 2, 3, 7, 9, 10)])
+```
+
+On observe une forte corrélation positive entre parité et gestité, ainsi qu'une corrélation positive entre effacement et dilatation du col.
+
+### Exploration des variables qualitatives
+
+```{r}
+var_cat <- prema[, sapply(prema, is.factor)]
+```
+
+```{r}
+plot(CONSIS, PREMATURE)
+plot(MEMBRAN, PREMATURE)
+plot(GEMEL, PREMATURE)
+```
+
+### Analyse bidimensionnelle
+
+```{r}
+tbl_summary(prema, by = PREMATURE) %>% add_p()
+```
+
+## Modélisation
+
+### Modèle complet (Modèle 1)
+
+```{r}
+model1 <- glm(PREMATURE ~ ., family = "binomial", data = prema)
+summary(model1)
+```
+
+Les variables significatives dans ce premier modèle sont la dilatation et l'effacement du col (état du col), l'état de la membrane, ainsi que la parité.
+
+### Sélection automatique des variables (Modèle 2)
+
+```{r}
+model2 <- step(model1)
+summary(model2)
+```
+
+Le modèle réduit conserve les variables les plus explicatives du risque d'accouchement prématuré identifiées dans le Modèle 1.
+
+## Interprétation : facteurs de risque et facteurs protecteurs
+
+```{r}
+exp(cbind(OR = coef(model2), confint(model2)))
+tbl_regression(model2, exponentiate = TRUE)
+```
+
+**Facteurs de risque associés à l'accouchement prématuré :**
+
+- Dilatation du col plus importante
+- Nombre de grossesses antérieures (gestité) plus élevé
+- Grossesse multiple
+
+**Facteurs protecteurs :**
+
+- Âge gestationnel plus avancé à l'entrée dans l'étude
+- Nombre de grossesses à terme antérieures (parité) plus élevé
+- Absence de diabète
+- Absence de transfert vers un hôpital en soins spécialisés
+
+**Non significatif :** l'effacement du col n'est pas associé de façon significative à la survenue d'un accouchement prématuré dans ce modèle.
+
+## Qualité prédictive du modèle
+
+```{r}
+pi_hat <- predict(model2, prema, type = "response")
+boxplot(pi_hat ~ prema$PREMATURE)
+```
+
+Le modèle attribue des probabilités prédites nettement plus élevées aux cas réellement prématurés qu'aux cas non prématurés, ce qui traduit un bon pouvoir discriminant.
+
+### Matrice de confusion (seuil = 0,5)
+
+```{r}
+y_hat <- as.factor(ifelse(pi_hat > 0.5, "predit pos", "predit neg"))
+MatConf <- table(prema$PREMATURE, y_hat)
+MatConf
+prop.table(MatConf, margin = 1)
+```
+
+Le modèle prédit correctement 83 % des accouchements prématurés (sensibilité) et 54 % des accouchements non prématurés (spécificité) : il est plus performant pour détecter les cas positifs que les cas négatifs.
+
+### Courbe ROC
+
+```{r}
+prema$pi_hat <- pi_hat
+pi_hat <- na.omit(pi_hat)
+pred <- prediction(pi_hat, prema$PREMATURE)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf)
+
+AUC <- performance(pred, "auc")
+attr(AUC, "y.values")[[1]]
+```
+
+## Conclusion
+
+Ce modèle de régression logistique met en évidence des facteurs de risque et des facteurs protecteurs cohérents avec la littérature clinique sur l'accouchement prématuré (état du col, antécédents obstétricaux, diabète). Sa capacité prédictive, évaluée par la matrice de confusion et la courbe ROC, montre une bonne sensibilité, avec une marge de progression sur la spécificité — une piste d'amélioration possible serait l'ajustement du seuil de décision ou l'exploration de modèles alternatifs.
